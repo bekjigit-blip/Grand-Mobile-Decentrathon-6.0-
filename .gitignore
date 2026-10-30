@@ -1,0 +1,29 @@
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+
+# Python & AI Studio Decentrathon Private data ignores
+__pycache__/
+*.pyc
+.pytest_cache/
+venv/
+.venv/
+
+# Private dataset, indexes, and database
+data/train.jsonl
+data/valid.jsonl
+*.tgz
+*.tar.gz
+*.db
+*.sqlite
+*.sqlite3
+index_cache/
+*.joblib
+pred.jsonl
+pred_*.jsonl
+

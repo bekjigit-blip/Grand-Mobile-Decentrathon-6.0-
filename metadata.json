@@ -1,0 +1,6 @@
+{
+  "name": "Grand Mobile Support Copilot",
+  "description": "Grand Mobile × Decentrathon 6.0: Offline CPU TF-IDF Support Copilot with Multilingual NLP Triage, Rules Matching, and Admin Queue",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

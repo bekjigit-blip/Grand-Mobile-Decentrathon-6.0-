@@ -1,0 +1,11 @@
+# Pinned Python dependencies for Grand Mobile Support Copilot
+# Tested on Python 3.10 / 3.11 (Linux & Windows)
+fastapi==0.115.5
+uvicorn==0.32.1
+pydantic==2.10.2
+scikit-learn==1.5.2
+scipy==1.14.1
+joblib==1.4.2
+requests==2.32.3
+python-multipart==0.0.17
+pytest==8.3.3
