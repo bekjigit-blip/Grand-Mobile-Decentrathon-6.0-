@@ -49,7 +49,7 @@ class DraftReply(BaseModel):
 
 class TriageRequest(BaseModel):
     # Official contract format
-    kind: Optional[str] = "complaint"
+    kind: Optional[str] = None
     messages: Optional[List[MessageItem]] = None
     
     # Flat / legacy format support
@@ -200,4 +200,5 @@ def get_benchmark():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("app.server:app", host="127.0.0.1", port=8005, reload=False)
+    port = int(os.environ.get("PORT_BACKEND", 8005))
+    uvicorn.run("app.server:app", host="127.0.0.1", port=port, reload=False)

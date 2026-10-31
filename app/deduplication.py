@@ -12,6 +12,8 @@ def init_db():
         CREATE TABLE IF NOT EXISTS tickets_history (
             ticket_id TEXT PRIMARY KEY,
             reporter_hash TEXT,
+            reported_hash TEXT,
+            reported_nick TEXT,
             text_hash TEXT,
             full_text TEXT,
             created_at TEXT,
@@ -19,17 +21,21 @@ def init_db():
             category TEXT
         )
     """)
-    # Check if full_text column exists in existing table
+    # Check if columns exist in existing table
     cursor.execute("PRAGMA table_info(tickets_history)")
     columns = [col[1] for col in cursor.fetchall()]
     if "full_text" not in columns:
         cursor.execute("ALTER TABLE tickets_history ADD COLUMN full_text TEXT")
         if "text_snippet" in columns:
             cursor.execute("UPDATE tickets_history SET full_text = text_snippet WHERE full_text IS NULL")
+    if "reported_hash" not in columns:
+        cursor.execute("ALTER TABLE tickets_history ADD COLUMN reported_hash TEXT")
+    if "reported_nick" not in columns:
+        cursor.execute("ALTER TABLE tickets_history ADD COLUMN reported_nick TEXT")
 
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_reporter_time ON tickets_history(reporter_hash, created_ts)")
 
-    # Table for admin queue actions persistence (Point 11)
+    # Table for admin queue actions persistence (Point 11 & Requirement 7)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS admin_actions (
             ticket_id TEXT PRIMARY KEY,
@@ -85,7 +91,9 @@ def check_and_record_duplicate(
     reporter_hash: Optional[str],
     created_at_str: Optional[str],
     raw_text: str,
-    category: str
+    category: str,
+    reported_hash: Optional[str] = None,
+    reported_nick: Optional[str] = None
 ) -> Tuple[bool, Optional[str]]:
     """
     Checks for duplicate ticket within the 1-hour window:
@@ -93,6 +101,8 @@ def check_and_record_duplicate(
     - Does NOT consider future records as duplicates of earlier records.
     - Compares the entire normalized text.
     - If reporter_hash or created_at_str is missing, does NOT guess cross-player duplicate.
+    - If the same author submits the same text against TWO DIFFERENT accused players,
+      they are NOT merged as duplicates (Requirement 6).
     """
     init_db()
 
@@ -103,11 +113,13 @@ def check_and_record_duplicate(
             cur = conn.cursor()
             cur.execute("""
                 INSERT OR REPLACE INTO tickets_history
-                (ticket_id, reporter_hash, text_hash, full_text, created_at, created_ts, category)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                (ticket_id, reporter_hash, reported_hash, reported_nick, text_hash, full_text, created_at, created_ts, category)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 ticket_id,
                 reporter_hash or "",
+                reported_hash or "",
+                reported_nick or "",
                 hashlib.sha256((raw_text or "").encode('utf-8')).hexdigest(),
                 raw_text or "",
                 created_at_str or "",
@@ -136,14 +148,25 @@ def check_and_record_duplicate(
 
         # Query past records strictly within current_ts - 3600 <= created_ts <= current_ts
         cur.execute("""
-            SELECT ticket_id, full_text, text_hash, created_ts
+            SELECT ticket_id, full_text, text_hash, created_ts, reported_hash, reported_nick
             FROM tickets_history
             WHERE reporter_hash = ? AND created_ts >= ? AND created_ts <= ? AND ticket_id != ?
             ORDER BY created_ts DESC
         """, (reporter_hash, min_window_ts, current_ts, ticket_id))
 
         past_records = cur.fetchall()
-        for past_id, past_full_text, past_thash, past_ts in past_records:
+        for past_id, past_full_text, past_thash, past_ts, past_rep_hash, past_rep_nick in past_records:
+            # Check if reported players are explicitly different
+            different_accused = False
+            if reported_hash and past_rep_hash and reported_hash != past_rep_hash:
+                different_accused = True
+            elif reported_nick and past_rep_nick and reported_nick.lower() != past_rep_nick.lower():
+                different_accused = True
+
+            if different_accused:
+                # Do NOT mark as duplicate if filed against a different player!
+                continue
+
             if past_thash == text_hash:
                 is_duplicate = True
                 time_diff_min = max(1, int((current_ts - past_ts) / 60))
@@ -160,11 +183,13 @@ def check_and_record_duplicate(
         # Save record for future checks
         cur.execute("""
             INSERT OR REPLACE INTO tickets_history
-            (ticket_id, reporter_hash, text_hash, full_text, created_at, created_ts, category)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            (ticket_id, reporter_hash, reported_hash, reported_nick, text_hash, full_text, created_at, created_ts, category)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             ticket_id,
             reporter_hash,
+            reported_hash or "",
+            reported_nick or "",
             text_hash,
             raw_text,
             created_at_str,
@@ -188,11 +213,15 @@ def save_admin_action(
     assigned_to: Optional[str] = None,
     note: Optional[str] = None
 ):
-    """Persists admin moderation actions into SQLite."""
+    """
+    Persists admin moderation actions into SQLite.
+    Properly saves even empty draft_text if admin cleared the response (Requirement 7).
+    """
     init_db()
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
     effective_action = action or status
+    saved_draft = "" if draft_text is None else str(draft_text)
     cur.execute("""
         INSERT OR REPLACE INTO admin_actions
         (ticket_id, status, draft_text, action, category, priority, assigned_to, note, updated_at)
@@ -200,7 +229,7 @@ def save_admin_action(
     """, (
         ticket_id,
         status,
-        draft_text or "",
+        saved_draft,
         effective_action,
         category or "",
         priority or "",

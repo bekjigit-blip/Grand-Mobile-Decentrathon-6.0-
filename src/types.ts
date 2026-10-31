@@ -72,7 +72,7 @@ export interface BenchmarkMetrics {
     rules_index_size_kb: number;
     taxonomy_index_size_kb: number;
     total_disk_footprint_kb: number;
-    process_ram_mb: number;
+    process_ram_mb: number | null;
   };
   latency_metrics: {
     mean_ms: number;

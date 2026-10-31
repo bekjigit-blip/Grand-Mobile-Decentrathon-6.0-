@@ -2,6 +2,9 @@ import time
 import os
 import platform
 import json
+import re
+import sys
+import argparse
 import numpy as np
 from typing import Dict, Any
 
@@ -11,13 +14,20 @@ from app.config import (
     get_process_memory_mb, SEMANTIC_CITATION_THRESHOLD
 )
 
-def run_quick_benchmark() -> Dict[str, Any]:
+def run_quick_benchmark(custom_path: str = None) -> Dict[str, Any]:
     service = get_triage_service()
     service.initialize()
 
-    sample_file = DATA_DIR / "sample_tickets.jsonl"
+    sample_file = None
+    if custom_path and os.path.exists(custom_path):
+        sample_file = custom_path
+    elif os.path.exists(DATA_DIR / "sample_tickets.jsonl"):
+        sample_file = str(DATA_DIR / "sample_tickets.jsonl")
+    elif os.path.exists(DATA_DIR / "valid.jsonl"):
+        sample_file = str(DATA_DIR / "valid.jsonl")
+
     tickets = []
-    if os.path.exists(sample_file):
+    if sample_file and os.path.exists(sample_file):
         with open(sample_file, "r", encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
@@ -52,10 +62,21 @@ def run_quick_benchmark() -> Dict[str, Any]:
                 cited = res["draft_reply"].get("cited", [])
                 if cited:
                     total_citations += len(cited)
-                    # Check citation relevance: verify matched rule scored >= threshold
+                    # Evaluate citation relevance against category rule references (Requirement 7)
+                    cat_meta = service.taxonomy_classifier.category_by_code.get(res["category"], {})
+                    official_refs = cat_meta.get("rule_refs", [])
                     matched = res.get("matched_rules", [])
+
                     for c in cited:
-                        if any(m.get("ref") == c and m.get("score", 0) >= SEMANTIC_CITATION_THRESHOLD for m in matched):
+                        is_relevant = False
+                        clean_c = re.sub(r'[^0-9\.]', '', c)
+                        # Check match against official category rule refs
+                        if any(clean_c == re.sub(r'[^0-9\.]', '', ref) for ref in official_refs):
+                            is_relevant = True
+                        elif any(m.get("ref") == c and m.get("score", 0) >= SEMANTIC_CITATION_THRESHOLD for m in matched):
+                            is_relevant = True
+
+                        if is_relevant:
                             relevant_citations += 1
 
                 # Capture real multilingual examples
@@ -102,7 +123,8 @@ def run_quick_benchmark() -> Dict[str, Any]:
             pass
 
     human_rate = (human_count / len(tickets)) * 100 if tickets else 0.0
-    citation_relevance = (relevant_citations / total_citations * 100) if total_citations > 0 else 100.0
+    # Requirement 7: If total_citations == 0, do NOT automatically return 100%
+    citation_relevance = (relevant_citations / total_citations * 100) if total_citations > 0 else 0.0
 
     return {
         "status": "success",
@@ -144,5 +166,9 @@ def run_quick_benchmark() -> Dict[str, Any]:
     }
 
 if __name__ == "__main__":
-    results = run_quick_benchmark()
+    parser = argparse.ArgumentParser(description="Run quick benchmark on Grand Mobile Copilot")
+    parser.add_argument("--input", type=str, default=None, help="Path to input jsonl file")
+    args = parser.parse_args()
+
+    results = run_quick_benchmark(args.input)
     print(json.dumps(results, indent=2, ensure_ascii=False))

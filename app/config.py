@@ -1,5 +1,7 @@
 import os
+import hashlib
 from pathlib import Path
+from typing import Optional
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -18,7 +20,7 @@ METADATA_CACHE_PATH = CACHE_DIR / "index_metadata.json"
 
 # TF-IDF Configuration
 TFIDF_CONFIG = {
-    "version": "2.0.0",
+    "version": "2.1.0",
     "word_ngram_range": (1, 2),
     "char_ngram_range": (3, 5),
     "word_weight": 0.60,
@@ -28,7 +30,7 @@ TFIDF_CONFIG = {
 }
 
 # Thresholds
-SEMANTIC_CITATION_THRESHOLD = 0.008  # Rule must meet this semantic relevance threshold to be cited
+SEMANTIC_CITATION_THRESHOLD = 0.035  # Rule must meet this semantic relevance threshold to be cited
 CONFIDENCE_THRESHOLD = 0.28
 TOP2_MARGIN_THRESHOLD = 0.05
 DUPLICATE_TIME_WINDOW_SECONDS = 3600
@@ -36,16 +38,27 @@ DUPLICATE_SIMILARITY_THRESHOLD = 0.85
 
 # Official category codes that strictly require human intervention
 MANDATORY_HUMAN_CATEGORIES = {
-    "financial.donation",
-    "security.account",
-    "appeal.punishment",
-    "complaint.admin",
+    "report.account",
+    "report.payment",
+    "complaint.cheat",
     "complaint.scam",
-    "complaint.cheats"
+    "complaint.rmt_ads",
+    "complaint.admin"
 }
 
+def compute_source_data_hash() -> str:
+    """Computes a combined SHA-256 fingerprint of source data and TF-IDF config to validate index cache."""
+    h = hashlib.sha256()
+    for p in [RULES_PATH, TAXONOMY_PATH, PROTOTYPES_PATH]:
+        if os.path.exists(p):
+            with open(p, "rb") as f:
+                h.update(f.read())
+    h.update(str(TFIDF_CONFIG).encode("utf-8"))
+    return h.hexdigest()[:16]
+
 # Cross-platform memory utility (works on Windows, Linux, macOS)
-def get_process_memory_mb() -> float:
+def get_process_memory_mb() -> Optional[float]:
+    """Returns actual process RAM in MB via psutil or resource; returns None if unavailable (no fake numbers)."""
     try:
         import psutil
         return round(psutil.Process().memory_info().rss / (1024 * 1024), 2)
@@ -54,4 +67,4 @@ def get_process_memory_mb() -> float:
             import resource
             return round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0, 2)
         except Exception:
-            return 168.0
+            return None

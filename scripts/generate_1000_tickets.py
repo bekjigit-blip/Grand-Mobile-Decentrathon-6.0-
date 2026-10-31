@@ -1,12 +1,28 @@
 """
-Generates 1000 official schema validation tickets for Decentrathon 6.0 Support Copilot.
-Covers:
-- 14 official dot-separated taxonomy categories
-- 6 languages (kk, ru, uz, en, es, pt)
-- Official input contract: kind, messages: [{role: "player", text, attachments}]
-- Edge cases: CP1251 corruption, Uzbek apostrophe variants (oʻ vs o'),
-  negation of evidence ("скринов нет", "дәлел жоқ"), duplicate timestamps within 1-hour,
-  speedhack cheat signals, payment issues, punishment appeals, multi-segment rule refs (ЖБ 1.2.7).
+Generates 1000 official validation tickets for Decentrathon 6.0 Support Copilot.
+Strictly conforms to:
+- 14 official dot-separated categories:
+    complaint.insult
+    complaint.cheat
+    complaint.dm
+    complaint.scam
+    complaint.rmt_ads
+    complaint.admin
+    complaint.other
+    complaint.invalid
+    report.question
+    report.help
+    report.complaint
+    report.account
+    report.payment
+    report.offtopic
+- 2 transport kinds: 'complaint' and 'report'
+- Multilingual test cases (kk, ru, uz, en, es, pt)
+- Real punishment appeals (ban/mute/demorgan) routing to complaint.admin
+- Account security & hack tickets routing to report.account
+- Payment & donation tickets routing to report.payment
+- Edge cases: CP1251 Kazakh corruption, Uzbek apostrophe variants, evidence negation,
+  repeated authors with different accused players, attachment preservation.
 """
 
 import json
@@ -15,104 +31,93 @@ from datetime import datetime, timedelta
 
 TEMPLATES_BY_CATEGORY = {
     "complaint.insult": [
-        ("kk", "Ойыншы {nick} мені қорлады және чатта былапыт сөздер жазды", "2.1"),
-        ("ru", "Игрок {nick} оскорбил мою семью и вел себя неадекватно в чате", "4.1"),
+        ("kk", "Ойыншы {nick} мені және ата-анамды былапыт сөздермен қорлады чатта", "4.1"),
+        ("ru", "Игрок {nick} жестко оскорбил моих родных в общем чате", "4.1"),
         ("uz", "{nick} ismli o'yinchi meni haqorat qildi va yomon so'zlar bilan so'kindi", "4.1"),
-        ("en", "Player {nick} is excessively insulting and harassing other players in general chat", "4.1")
+        ("en", "Player {nick} is insulting players in chat with toxic language", "4.1"),
+        ("es", "El jugador {nick} me insultó gravemente en el chat público", "4.1")
+    ],
+    "complaint.cheat": [
+        ("kk", "Ойыншы {nick} спидхак және флайхак қолданып әскери база үстінде ұшып жүр", "8.1"),
+        ("ru", "Игрок {nick} использует спидхак и летает на рванке, разносит спавн", "8.1"),
+        ("uz", "{nick} chit ishlatyapti, mashinalarni uchirib serverni buzyapti", "8.1"),
+        ("en", "Player {nick} is using speedhack and flying hack on server", "8.1")
     ],
     "complaint.dm": [
-        ("kk", "Ойыншы {nick} автобазарда мені себепсіз атып өлтірді DM жасады", "2.1"),
-        ("ru", "Игрок {nick} совершил ДМ и расстрелял меня без какой-либо РП причины", "2.1"),
+        ("kk", "Ойыншы {nick} автобазарда мені себепсіз атып өлтірді, DM жасады", "2.1"),
+        ("ru", "Игрок {nick} совершил ДМ и расстрелял меня без какой-либо причины", "2.1"),
         ("uz", "{nick} hech qanday sababsiz meni o'ldirdi DM qildi", "2.1"),
-        ("en", "Player {nick} killed me without reason (DM) outside the police department", "2.1")
-    ],
-    "complaint.db": [
-        ("kk", "Ойыншы {nick} көлікпен қасақана қағып өлтірді ДБ жасады", "2.3"),
-        ("ru", "Игрок {nick} намеренно давил меня машиной на спавне, ДБ", "2.3"),
-        ("uz", "{nick} mashina bilan ataylab ustimdan bosib o'ldirdi (DB)", "2.3")
-    ],
-    "complaint.cheats": [
-        ("kk", "{nick} спидхак қосып алып әскери базаның үстімен ұшып жүр", "8.1"),
-        ("ru", "Игрок {nick} использует спидхак и летает на рванке, крашит игроков", "8.1"),
-        ("uz", "{nick} chit ishlatyapti, mashinalarni uchirib serverni buzyapti", "8.1"),
-        ("en", "Player {nick} is using speedhack and flying vehicle hack on server 2", "8.1")
+        ("en", "Player {nick} killed me without reason (DM) outside the hospital", "2.1")
     ],
     "complaint.scam": [
-        ("kk", "{nick} мені алдап көлігімді 1 рубльге алып кетті нонРП алдау", "7.1"),
-        ("ru", "Игрок {nick} обманул меня при обмене машинами и вышел из игры, нонрп развод", "7.1"),
-        ("uz", "{nick} mashina almashganda meni aldadi va o'yindan chiqib ketdi", "7.1")
+        ("kk", "Ойыншы {nick} мені нонРП алдап көлігімді 1 рубльге алып қашып кетті", "7.1"),
+        ("ru", "Игрок {nick} обманул меня при обмене машинами и офнулся, нонрп развод", "7.1"),
+        ("uz", "{nick} mashina almashganda meni aldadi va o'yindan chiqib ketdi", "7.1"),
+        ("en", "Player {nick} scammed me during car trade and immediately disconnected", "7.1")
     ],
-    "complaint.nonrp": [
-        ("kk", "Полиция қызметкері {nick} ешқандай РП ойнамай бірден наручник тақты", "5.1"),
-        ("ru", "Сотрудник МВД {nick} задержал меня без отыгровки РП и без причины", "5.1"),
-        ("uz", "Politsiyachi {nick} RP qilmasdan qamoqqa tiqdi", "5.1")
-    ],
-    "complaint.greenzone": [
-        ("kk", "Ойыншы {nick} орталық ауруханада Жасыл Аймақта (GZ) оқ жаудырды", "3.1"),
-        ("ru", "Игрок {nick} стрелял и убивал в Зеленой Зоне (GZ) больницы Арзамаса", "3.1"),
-        ("uz", "{nick} shifoxonaning Yashil Zonasida (GZ) otishma boshladi", "3.1")
+    "complaint.rmt_ads": [
+        ("kk", "Ойыншы {nick} вирт сатамын деп телеграм арнасын жарнамалап жатыр", "4.2"),
+        ("ru", "Игрок {nick} рекламирует продажу виртов за реал и сторонний телеграм канал", "4.2"),
+        ("uz", "{nick} virt sotaman deb telegram kanalini reklama qilyapti", "4.2"),
+        ("en", "Player {nick} is spamming third party links selling in-game currency for real money", "4.2")
     ],
     "complaint.admin": [
-        ("kk", "Әкімші {nick} достарын қорғап бізге ғана әділетсіз жаза берді", "11.1"),
-        ("ru", "Администратор {nick} покрывает своих друзей и блатит их, а меня посадил в деморган", "11.1"),
-        ("uz", "Admin {nick} o'z tanishlariga yordam berib adolatsiz qamoqqa soldi", "11.1")
+        ("ru", "Администратор дал мне бан за DM. Я не согласен с наказанием, прошу пересмотреть.", "11.1"),
+        ("ru", "Мне выдали мут за оскорбление родных, я с этим наказанием не согласен.", "11.1"),
+        ("kk", "Әкімші берген жазамен келіспеймін, қате деморганға тықты қайта қарауды сұраймын", "11.1"),
+        ("ru", "Администратор {nick} блатит своих друзей и посадил меня без доказательств", "11.1"),
+        ("uz", "Admin {nick} menga noto'g'ri jazo berdi, apellyatsiya bermoqchiman", "11.1")
     ],
-    "appeal.punishment": [
-        ("kk", "Әкімші мені ДМ үшін қателікпен деморганға қамады, жазаны алып тастаңыз", "10.1"),
-        ("ru", "Администратор ошибочно выдал мне бан на 30 дней за читы, прошу пересмотреть фрапс и разбанить", "10.1"),
-        ("uz", "Menga adashib berilgan ban bo'yicha appelyatsiya bermoqchiman, jazoni olib tashlang", "10.1")
+    "complaint.other": [
+        ("kk", "Ойыншы {nick} басқаларға кедергі келтіріп автотұрақты бітеп тастады", "1.1"),
+        ("ru", "Игрок {nick} создает помеху на спавне и блокирует выезд машиной", "1.1"),
+        ("uz", "{nick} yo'lni to'sib boshqa o'yinchilarga xalaqit beryapti", "1.1")
     ],
-    "security.account": [
-        ("kk", "Менің аккаунтымды біреу бұзып паролін ауыстырып тастапты көмектесіңіздерші", "9.1"),
-        ("ru", "Мой аккаунт взломали, привязанную почту отвязали и сменили пароль", "9.1"),
-        ("uz", "Akkauntim paroli o'zgartirilgan, kimdir buzib kirgan yordam bering", "9.1"),
+    "complaint.invalid": [
+        ("ru", "Игрок плохой накажите его", "1.1"),
+        ("kk", "Мына ойыншыны банға тығыңдар", "1.1"),
+        ("en", "Ban this guy please", "1.1")
+    ],
+    "report.question": [
+        ("kk", "Ойында жүргізуші куәлігін қай жерден және қалай алуға болады?", "1.1"),
+        ("ru", "Как устроиться на работу дальнобойщика и со скольки лет?", "1.1"),
+        ("uz", "O'yinda haydovchilik guvohnomasini qayerdan olsam bo'ladi?", "1.1"),
+        ("en", "How can I join the police department on the server?", "1.1")
+    ],
+    "report.help": [
+        ("kk", "Көлігім шұңқырға түсіп қалды шығарып беріңізші көмек керек", "1.1"),
+        ("ru", "Помогите пожалуйста, застрял в текстурах около автосалона", "1.1"),
+        ("uz", "Yordam bering, mashinam suvga tushib ketdi", "1.1")
+    ],
+    "report.complaint": [
+        ("ru", "Репорт: игрок {nick} нарушает правила прямо сейчас на спавне, последите", "2.1"),
+        ("kk", "Репорт: {nick} ойыншысын қазір тексеріңізші ереже бұзып жатыр", "2.1"),
+        ("uz", "Report: {nick} qoidani buzyapti iltimos tekshiring", "2.1")
+    ],
+    "report.account": [
+        ("kk", "Менің аккаунтымды біреу бұзып кіріп, паролін ауыстырып тастапты, көмектесіңізші", "9.1"),
+        ("ru", "Мой аккаунт взломали, привязанную почту сменили и украли имущество", "9.1"),
+        ("uz", "Akkauntim paroli buzilgan, kiring va tiklashga yordam bering", "9.1"),
         ("en", "My account was hacked and password was changed, please help recover it", "9.1")
     ],
-    "financial.donation": [
-        ("kk", "Каспи арқылы 2000 теңгеге донат жасадым бірақ коиндар ойынға түспеді", "6.1"),
-        ("ru", "Оплатил донат через СБП 1000 рублей, деньги списались а коинов на аккаунте нет", "6.1"),
-        ("uz", "Click orqali hisobimni to'ldirdim, pul ketdi lekin Grand Coins tushmadi", "6.1"),
-        ("es", "Compré monedas a través de pago en línea pero no se acreditaron en mi cuenta", "6.1")
+    "report.payment": [
+        ("kk", "Каспи арқылы 5000 теңгеге донат жасадым, ақша кетті бірақ коиндар түспеді чек бар", "6.1"),
+        ("ru", "Оплатил донат через СБП 1500 рублей, деньги списались а Grand Coins не пришли", "6.1"),
+        ("uz", "Click orqali to'lov qildim, pul yechildi lekin hisobga tushmadi", "6.1"),
+        ("pt", "Paguei moedas pelo Pix mas não caíram na conta, tenho comprovante", "6.1")
     ],
-    "technical.bug": [
-        ("kk", "Автосалоннан шыққан кезде машина жердің астына құлап краш береді", "1.1"),
-        ("ru", "При выходе из интерьера дома проваливаюсь под текстуры и игра крашится", "1.1"),
-        ("uz", "O'yinda mashinadan tushganda tekstura ostiga tushib ketmoqdaman, bag bor", "1.1")
-    ],
-    "question.help": [
-        ("kk", "Ойында жүргізуші куәлігін қай жерден және қалай алуға болады?", "1.1"),
-        ("ru", "Подскажите пожалуйста, со скольки лет в игре можно устроиться на работу дальнобойщика?", "1.1"),
-        ("uz", "O'yinda litsenziyani qayerdan olsam bo'ladi yordam bering", "1.1")
-    ],
-    "feedback.other": [
-        ("kk", "Ойынның жаңа жаңартуы өте керемет болыпты, әзірлеушілерге рахмет", "1.1"),
-        ("ru", "Спасибо разработчикам за классный осенний ивент, всё очень понравилось", "1.1"),
-        ("uz", "O'yin juda ajoyib chiqibdi, yangi mashinalar uchun rahmat", "1.1")
+    "report.offtopic": [
+        ("ru", "Всем привет как погода в Москве?", "1.1"),
+        ("kk", "Сәлем достар бүгін кім ойнайды", "1.1"),
+        ("uz", "Salom hammaga qandaysizlar", "1.1")
     ]
 }
 
 NICKNAMES = [
     "Arman_Petrov", "Sergei_Gromov", "Jasur_Aliev", "Dmitry_Morozov",
     "John_Miller", "Carlos_Santana", "Nurlan_Sabyr", "Alisher_Usman",
-    "Vladimir_Putin", "Kairat_Nurtas", "Elena_Smirnova", "Timur_Bekmambet"
+    "Kairat_Nurtas", "Elena_Smirnova", "Timur_Bekmambet", "Danil_Voronov"
 ]
-
-CATEGORY_KINDS = {
-    "complaint.insult": "complaint",
-    "complaint.dm": "complaint",
-    "complaint.db": "complaint",
-    "complaint.cheats": "complaint",
-    "complaint.scam": "complaint",
-    "complaint.nonrp": "complaint",
-    "complaint.greenzone": "complaint",
-    "complaint.admin": "complaint",
-    "appeal.punishment": "appeal",
-    "security.account": "security",
-    "financial.donation": "financial",
-    "technical.bug": "technical",
-    "question.help": "question",
-    "feedback.other": "feedback"
-}
 
 def generate_tickets(count=1000):
     random.seed(42)
@@ -128,34 +133,42 @@ def generate_tickets(count=1000):
 
         text = tpl.format(nick=nick)
 
-        # Introduce edge cases:
         # 1. CP1251 corruption for some Kazakh tickets
         if lang == "kk" and random.random() < 0.20:
             text = text.replace("ә", "є").replace("ұ", "ў").replace("ө", "ґ").replace("қ", "ќ")
 
-        # 2. Evidence negation phrase
-        has_negation = False
-        if random.random() < 0.15:
-            negation = random.choice(["но скринов нет", "скрин жоқ", "дәлел жоқ", "dalilsiz"])
-            text = f"{text}, {negation}"
-            has_negation = True
-            attachments = 0
+        # 2. Uzbek apostrophe variants
+        if lang == "uz" and random.random() < 0.30:
+            text = text.replace("o'", "oʻ").replace("g'", "gʻ")
+
+        # 3. Evidence negation vs evidence presence
+        attachments = 0
+        if "complaint" in cat:
+            if random.random() < 0.20:
+                negation = random.choice(["но скринов нет", "скрин жоқ", "дәлел жоқ", "dalilsiz"])
+                text = f"{text}, {negation}"
+                attachments = 0
+            else:
+                attachments = random.choice([1, 2, 3])
+        elif cat in ["report.payment"]:
+            attachments = random.choice([1, 2])
         else:
-            attachments = random.choice([0, 1, 2, 3])
+            attachments = 0 if random.random() < 0.85 else 1
 
         # Timestamps and reporters
         rep_id = f"reporter_{(i % 250) + 1:03d}"
         created_dt = base_time + timedelta(minutes=i * 2)
         created_at_str = created_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
-        kind = CATEGORY_KINDS[cat]
+        # Kind must be strictly 'complaint' or 'report'
+        kind = "complaint" if cat.startswith("complaint.") else "report"
 
-        # Standard messages payload
         ticket = {
             "ticket_id": f"TICKET-{i:04d}",
             "kind": kind,
             "reporter_hash": rep_id,
             "created_at": created_at_str,
+            "images_count": attachments,
             "messages": [
                 {
                     "role": "player",
@@ -165,9 +178,9 @@ def generate_tickets(count=1000):
             ]
         }
 
-        # Sometimes include rule_refs_raw
-        if random.random() < 0.35:
-            if random.random() < 0.1:
+        # Rule refs occasionally present
+        if random.random() < 0.30:
+            if random.random() < 0.15:
                 ticket["rule_refs_raw"] = "ЖБ 1.2.7"
             else:
                 ticket["rule_refs_raw"] = rule_ref
@@ -181,4 +194,4 @@ if __name__ == "__main__":
     with open("data/valid.jsonl", "w", encoding="utf-8") as f:
         for r in records:
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
-    print(f"Generated 1000 tickets in data/valid.jsonl successfully.")
+    print(f"Generated 1000 tickets in data/valid.jsonl successfully with official 14 categories and 2 kinds.")

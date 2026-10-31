@@ -8,17 +8,23 @@ import {
 export const MetricsView: React.FC = () => {
   const [metrics, setMetrics] = useState<BenchmarkMetrics | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
 
   const fetchMetrics = () => {
     setIsLoading(true);
+    setFetchError(null);
     fetch('/api/benchmark')
-      .then(res => res.json())
+      .then(res => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+        return res.json();
+      })
       .then(data => {
         setMetrics(data);
         setIsLoading(false);
       })
       .catch(err => {
         console.error('Benchmark fetch error:', err);
+        setFetchError(err.message || 'Метрикаларды жүктеу қатесі');
         setIsLoading(false);
       });
   };
@@ -76,7 +82,9 @@ export const MetricsView: React.FC = () => {
                 <Cpu className="w-4 h-4 text-cyan-400" />
               </div>
               <div className="text-2xl font-bold font-mono text-cyan-300">
-                {metrics.index_metrics.process_ram_mb} MB
+                {metrics.index_metrics.process_ram_mb !== null && metrics.index_metrics.process_ram_mb !== undefined
+                  ? `${metrics.index_metrics.process_ram_mb} MB`
+                  : 'Unavailable'}
               </div>
               <div className="text-[11px] text-slate-400 mt-1">
                 Индекс дискіде: {metrics.index_metrics.total_disk_footprint_kb} KB

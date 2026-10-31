@@ -34,24 +34,38 @@ export const PlaygroundView: React.FC = () => {
       att: 0
     },
     {
-      title: '🇷🇺 Чит / Speedhack (complaint.cheats, p1)',
+      title: '🇷🇺 Чит / Speedhack (complaint.cheat, p1)',
       kind: 'complaint',
       text: 'Игрок летает speedhack и разносит всех рванкой на спавне!',
       rep: 'rep_ru_001',
       att: 0
     },
     {
-      title: '🇷🇺 Донат / Grand Coins (financial.donation, p1)',
-      kind: 'financial',
+      title: '🇷🇺 Донат / Төлем (report.payment, p1)',
+      kind: 'report',
       text: 'Задонатил 500 рублей через СБП, деньги списались, а Grand Coins на баланс не поступили уже 2 часа. Чек прикрепил.',
       rep: 'rep_ru_002',
       att: 1
     },
     {
-      title: '🇷🇺 Взлом аккаунта (security.account, p0)',
-      kind: 'security',
+      title: '🇷🇺 Взлом аккаунта (report.account, p0)',
+      kind: 'report',
       text: 'Срочно помогите, меня взломали! Захожу на сервер, пишет неверный пароль, почта отвязана и 2FA сброшен. Ник Sergei_Gromov.',
       rep: 'rep_ru_003',
+      att: 0
+    },
+    {
+      title: '⚖️ Бан апелляциясы (complaint.admin, needs_human=true)',
+      kind: 'complaint',
+      text: 'Администратор дал мне бан за DM. Я не согласен с наказанием, прошу пересмотреть.',
+      rep: 'rep_ru_004',
+      att: 0
+    },
+    {
+      title: '⚖️ Мут апелляциясы (complaint.admin, needs_human=true)',
+      kind: 'complaint',
+      text: 'Мне выдали мут за оскорбление родных, я с этим наказанием не согласен.',
+      rep: 'rep_ru_005',
       att: 0
     },
     {
@@ -63,8 +77,11 @@ export const PlaygroundView: React.FC = () => {
     }
   ];
 
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
   const handleRunTriage = async () => {
     setIsLoading(true);
+    setErrorMessage(null);
     try {
       // Official messages format
       const response = await fetch('/triage', {
@@ -84,10 +101,16 @@ export const PlaygroundView: React.FC = () => {
           ]
         })
       });
+      if (!response.ok) {
+        const errText = await response.text();
+        throw new Error(`HTTP ${response.status}: ${errText || response.statusText}`);
+      }
       const data = await response.json();
       setResult(data);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Triage error:', err);
+      setErrorMessage(err.message || 'Қызметпен байланыс қатесі орын алды');
+      setResult(null);
     } finally {
       setIsLoading(false);
     }
@@ -149,12 +172,7 @@ export const PlaygroundView: React.FC = () => {
                   className="bg-slate-950 border border-slate-800 text-cyan-400 px-2 py-0.5 rounded text-xs font-mono focus:outline-none"
                 >
                   <option value="complaint">complaint</option>
-                  <option value="appeal">appeal</option>
-                  <option value="security">security</option>
-                  <option value="financial">financial</option>
-                  <option value="technical">technical</option>
-                  <option value="question">question</option>
-                  <option value="feedback">feedback</option>
+                  <option value="report">report</option>
                 </select>
               </div>
             </div>
@@ -214,6 +232,16 @@ export const PlaygroundView: React.FC = () => {
 
         {/* Right: Results Display */}
         <div>
+          {errorMessage && (
+            <div className="bg-rose-950/60 border border-rose-800 text-rose-300 p-4 rounded-xl text-xs flex items-start gap-3 mb-4">
+              <div className="p-1 rounded-md bg-rose-900/50 text-rose-300 font-bold">!</div>
+              <div>
+                <div className="font-semibold text-rose-200">HTTP Байланыс Қатесі:</div>
+                <div className="mt-0.5 text-rose-300 font-mono text-[11px]">{errorMessage}</div>
+              </div>
+            </div>
+          )}
+
           {result ? (
             <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-5 space-y-4">
               <div className="flex items-center justify-between border-b border-slate-800 pb-3">

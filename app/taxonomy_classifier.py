@@ -10,8 +10,9 @@ import joblib
 
 from app.config import (
     TAXONOMY_PATH, PROTOTYPES_PATH, TAXONOMY_INDEX_PATH, TFIDF_CONFIG,
-    CACHE_DIR, CONFIDENCE_THRESHOLD, TOP2_MARGIN_THRESHOLD
+    CACHE_DIR, CONFIDENCE_THRESHOLD, TOP2_MARGIN_THRESHOLD, compute_source_data_hash
 )
+from app.priority_engine import PUNISHMENT_APPEAL_MARKERS, HACK_MARKERS, PAYMENT_MARKERS, CHEAT_MARKERS, RMT_MARKERS
 
 class TaxonomyClassifier:
     def __init__(self):
@@ -61,12 +62,13 @@ class TaxonomyClassifier:
                 cat.get("name", ""),
                 cat.get("description", ""),
                 " ".join(keywords),
-                " ".join(examples)
+                " ".join(examples),
+                " ".join(cat.get("rule_refs", []))
             ]
-            corpus.append(" ".join(parts))
+            doc_text = " ".join([p for p in parts if p]).strip()
+            corpus.append(doc_text)
 
         word_vec = TfidfVectorizer(
-            analyzer='word',
             ngram_range=TFIDF_CONFIG["word_ngram_range"],
             sublinear_tf=TFIDF_CONFIG["sublinear_tf"],
             norm=TFIDF_CONFIG["norm"]
@@ -94,6 +96,7 @@ class TaxonomyClassifier:
         os.makedirs(CACHE_DIR, exist_ok=True)
         joblib.dump({
             "config_version": self.config_version,
+            "source_data_hash": compute_source_data_hash(),
             "vectorizer": self.vectorizer,
             "prototype_matrix": self.prototype_matrix,
             "categories": self.categories,
@@ -107,12 +110,14 @@ class TaxonomyClassifier:
         }
 
     def load_index(self) -> bool:
-        """Loads cached taxonomy index if present and version matches."""
+        """Loads cached taxonomy index if present, config matches, and source data hash matches."""
         if not os.path.exists(TAXONOMY_INDEX_PATH):
             return False
         try:
             cached = joblib.load(TAXONOMY_INDEX_PATH)
             if cached.get("config_version") != self.config_version:
+                return False
+            if cached.get("source_data_hash") != compute_source_data_hash():
                 return False
             self.vectorizer = cached["vectorizer"]
             self.prototype_matrix = cached["prototype_matrix"]
@@ -131,7 +136,7 @@ class TaxonomyClassifier:
     ) -> Dict[str, Any]:
         """
         Multilingual category classification strictly returning official dot-separated codes.
-        Constrains candidates by ticket kind if provided.
+        Constrains candidates by ticket kind ('complaint' or 'report') if provided.
         """
         if self.prototype_matrix is None or self.vectorizer is None:
             if not self.load_index():
@@ -159,22 +164,26 @@ class TaxonomyClassifier:
 
             matched_kw = [kw for kw in keywords if kw in text_lower]
             if matched_kw:
-                bonus = min(0.40, len(matched_kw) * 0.15)
+                bonus = min(0.35, len(matched_kw) * 0.12)
                 raw_scores[i] += bonus
 
-            # Decisive domain signal boosts
-            if code == "complaint.cheats":
-                if any(w in text_lower for w in ["speedhack", "летает", "fly", "flying", "рванка", "аим", "софт", "читтер", "читер", "спидхак"]):
-                    raw_scores[i] += 0.50
-            elif code == "appeal.punishment":
-                if any(w in text_lower for w in ["обжалован", "снять наказание", "ошибочный бан", "ошибочно посадил", "разбан", "снизить срок", "жазаны алып таста", "апелляци", "деморган ни за что"]):
-                    raw_scores[i] += 0.50
-            elif code == "security.account":
-                if any(w in text_lower for w in ["аккаунт ұрлан", "паролін ауыстыр", "взломали аккаунт", "украли аккаунт", "сменили почту", "взлом", "аккаунтымды біреу"]):
-                    raw_scores[i] += 0.50
-            elif code == "financial.donation":
-                if any(w in text_lower for w in ["донат", "каспи", "чек прикреп", "коинов нет", "grand coins", "деньги ушли", "төлем жасадым"]):
-                    raw_scores[i] += 0.40
+            # Domain signal boosts for official categories
+            if code == "complaint.cheat" and CHEAT_MARKERS.search(text_lower):
+                raw_scores[i] += 0.50
+            elif code == "complaint.admin" and PUNISHMENT_APPEAL_MARKERS.search(text_lower):
+                raw_scores[i] += 0.55
+            elif code == "complaint.rmt_ads" and RMT_MARKERS.search(text_lower):
+                raw_scores[i] += 0.50
+            elif code == "report.account" and HACK_MARKERS.search(text_lower):
+                raw_scores[i] += 0.50
+            elif code == "report.payment" and PAYMENT_MARKERS.search(text_lower):
+                raw_scores[i] += 0.50
+            elif code == "report.question" and any(w in text_lower for w in ["как устроиться", "где автошкола", "как сдать", "какая команда", "со скольки лет"]):
+                raw_scores[i] += 0.45
+            elif code == "report.help" and any(w in text_lower for w in ["застрял", "перевернулся", "спавн пж", "провалился", "достаньте", "кептеліп"]):
+                raw_scores[i] += 0.45
+            elif code == "complaint.invalid" and not extracted.get("has_evidence") and any(w in text_lower for w in ["скринов нет", "дәлел жоқ", "доказательств нет", "фрапса нет"]):
+                raw_scores[i] += 0.40
 
             # Rule reference alignment
             raw_rules = extracted.get("rule_refs", [])
@@ -187,7 +196,7 @@ class TaxonomyClassifier:
                         reasons.append(f"Ереже сілтемесі ({r}) '{code}' санатымен сәйкес келеді")
                         break
 
-        # Filter by kind constraint if specified
+        # Filter by kind constraint if specified (only 'complaint' or 'report')
         valid_indices = list(range(len(self.category_codes)))
         if kind_constraint:
             clean_kind = kind_constraint.strip().lower()

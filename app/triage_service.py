@@ -91,20 +91,23 @@ class TriageService:
             is_ambiguous=is_ambiguous
         )
 
-        # 6. Rule search with semantic relevance gate
+        # 6. Rule search with category relevance constraint and semantic relevance gate
         matched_rules = self.rule_indexer.search_rules(
             query_text=processed["augmented_text"],
+            category=category,
             top_k=3,
             rule_refs_raw=extracted["rule_refs"]
         )
 
-        # 7. Deduplication within 1-hour window (requires reporter_hash and created_at)
+        # 7. Deduplication within 1-hour window with accused player differentiation (Requirement 6)
         is_spam_or_duplicate, dup_reason = check_and_record_duplicate(
             ticket_id=ticket_id,
             reporter_hash=reporter_hash,
             created_at_str=created_at,
             raw_text=raw_text,
-            category=category
+            category=category,
+            reported_hash=adapted.get("reported_hash"),
+            reported_nick=adapted.get("reported_nick")
         )
 
         all_reasons = cat_result["reasons"] + priority_reasons
