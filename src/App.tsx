@@ -14,20 +14,29 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<'queue' | 'playground' | 'batch' | 'rules' | 'metrics'>('queue');
   const [tickets, setTickets] = useState<TicketItem[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [healthStatus, setHealthStatus] = useState<any>(null);
 
-  const fetchTickets = () => {
+  const fetchTickets = async () => {
     setIsLoading(true);
-    fetch('/api/sample_tickets')
-      .then(res => res.json())
-      .then(data => {
+    setErrorMessage(null);
+    try {
+      const res = await fetch('/api/sample_tickets');
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}: Backend service responded with error`);
+      }
+      const data = await res.json();
+      if (Array.isArray(data)) {
         setTickets(data);
-        setIsLoading(false);
-      })
-      .catch(err => {
-        console.error('Failed to load tickets:', err);
-        setIsLoading(false);
-      });
+      } else {
+        throw new Error('Invalid data format received from backend');
+      }
+    } catch (err: any) {
+      console.error('Failed to load tickets:', err);
+      setErrorMessage(`Сервермен байланыс қатесі: ${err.message}. Қайта көру үшін жаңартыңыз.`);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const fetchHealth = () => {
@@ -77,7 +86,7 @@ export default function App() {
                 GRAND MOBILE <span className="text-cyan-400 font-normal">COPILOT</span>
               </span>
               <span className="text-[10px] text-slate-400 font-medium block">
-                Decentrathon 6.0 &bull; Offline CPU NLP MVP
+                Decentrathon 6.0 &bull; Official Taxonomy & 266 Authentic Rules
               </span>
             </div>
           </div>
@@ -168,6 +177,7 @@ export default function App() {
             onUpdateTicketStatus={handleUpdateTicketStatus}
             onRefresh={fetchTickets}
             isLoading={isLoading}
+            errorMessage={errorMessage}
           />
         )}
         {activeTab === 'playground' && <PlaygroundView />}

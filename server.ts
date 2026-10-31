@@ -2,17 +2,31 @@ import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import { spawn } from 'child_process';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const PORT = 3000;
-const PYTHON_PORT = 8005;
+const PORT = parseInt(process.env.PORT || '3000', 10);
+const PYTHON_PORT = parseInt(process.env.PORT_BACKEND || '8005', 10);
 
-// Start Python FastAPI backend process
-console.log('[Server] Starting Python FastAPI backend (app.server)...');
-const pythonProcess = spawn('python3', ['-m', 'app.server'], {
+// Configurable Python interpreter for Windows venv and Linux
+const isWin = process.platform === 'win32';
+const defaultPython = isWin
+  ? (fs.existsSync(path.join(__dirname, 'venv', 'Scripts', 'python.exe'))
+      ? path.join(__dirname, 'venv', 'Scripts', 'python.exe')
+      : 'python')
+  : (fs.existsSync(path.join(__dirname, 'venv', 'bin', 'python'))
+      ? path.join(__dirname, 'venv', 'bin', 'python')
+      : 'python3');
+
+const pythonExecutable = process.env.PYTHON_PATH || defaultPython;
+
+console.log(`[Server] Using Python interpreter: ${pythonExecutable}`);
+console.log(`[Server] Starting Python FastAPI backend (app.server) on port ${PYTHON_PORT}...`);
+
+const pythonProcess = spawn(pythonExecutable, ['-m', 'app.server'], {
   cwd: __dirname,
   env: { ...process.env, PYTHONPATH: '.' },
   stdio: 'inherit'
@@ -56,7 +70,7 @@ async function createServer() {
       res.status(pythonRes.status).json(data);
     } catch (err: any) {
       res.status(502).json({
-        error: 'Python backend is starting or unavailable',
+        error: 'Python backend is unavailable or starting',
         details: err?.message,
         targetUrl
       });
@@ -85,7 +99,7 @@ async function createServer() {
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`[Server] Support Copilot running at http://0.0.0.0:${PORT}`);
-    console.log(`[Server] Direct FastAPI endpoint available at http://127.0.0.1:${PYTHON_PORT}`);
+    console.log(`[Server] Direct FastAPI backend at http://127.0.0.1:${PYTHON_PORT}`);
   });
 }
 

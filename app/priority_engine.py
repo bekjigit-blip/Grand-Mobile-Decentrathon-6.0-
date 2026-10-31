@@ -1,94 +1,109 @@
-from typing import Dict, Any, Tuple, List
 import re
+from typing import Tuple, List, Dict, Any
 from app.config import MANDATORY_HUMAN_CATEGORIES
 
-# Textual markers for priority escalation & human routing
-P0_MARKERS = re.compile(r'\b(взлом|взломали|украли\s+аккаунт|сменили\s+почту|аккаунт\s+ұрланды|құпиясөз\s+ұрланды|akkaunt\s+buzildi|hacked|stolen\s+account)\b', re.IGNORECASE)
-P1_PAYMENT_MARKERS = re.compile(r'\b(донат|grand\s+coins|списали\s+деньги|чек|төлем|коиндар|pul\s+yechildi|payment|coins)\b', re.IGNORECASE)
-P1_SEVERE_CHEAT_MARKERS = re.compile(r'\b(рванка|carshot|дамгер|damager|крашер|разносит\s+сервер)\b', re.IGNORECASE)
-P2_APPEAL_MARKERS = re.compile(r'\b(обжалование|разбан|снизить\s+срок|ошибочный\s+бан|деморган\s+ни\s+за\s+что|жазаны\s+алып\s+тастаңыз|jazoni\s+bekor)\b', re.IGNORECASE)
-P2_ADMIN_MARKERS = re.compile(r'\b(жалоба\s+на\s+админа|блат\s+админа|әкімшіге\s+шағым|adminga\s+shikoyat)\b', re.IGNORECASE)
+# Textual markers
+HACK_MARKERS = re.compile(
+    r'\b(взлом|взломали|украли\s+аккаунт|сменили\s+почту|аккаунт\s+ұрланды|құпиясөз\s+ұрланды|akkaunt\s+buzildi|hacked|stolen\s+account)\b',
+    re.IGNORECASE
+)
+PAYMENT_MARKERS = re.compile(
+    r'\b(донат|grand\s+coins|списали\s+деньги|чек|төлем|коиндар|pul\s+yechildi|payment|coins)\b',
+    re.IGNORECASE
+)
+APPEAL_MARKERS = re.compile(
+    r'\b(обжалование|разбан|снизить\s+срок|ошибочный\s+бан|деморган\s+ни\s+за\s+что|жазаны\s+алып\s+тастаңыз|jazoni\s+bekor|unban)\b',
+    re.IGNORECASE
+)
+ADMIN_MARKERS = re.compile(
+    r'\b(жалоба\s+на\s+админа|блат\s+админа|әкімшіге\s+шағым|adminga\s+shikoyat|блат)\b',
+    re.IGNORECASE
+)
+CHEAT_MARKERS = re.compile(
+    r'\b(рванка|carshot|дамгер|damager|крашер|разносит\s+сервер|speedhack|летает|flying|аим|софт)\b',
+    re.IGNORECASE
+)
+
+# Official priority mapping for all 14 official category codes
+OFFICIAL_PRIORITY_MAP = {
+    "security.account": "p0",
+    "financial.donation": "p1",
+    "complaint.cheats": "p1",
+    "complaint.scam": "p1",
+    "complaint.insult": "p2",
+    "complaint.dm": "p2",
+    "complaint.db": "p2",
+    "complaint.nonrp": "p2",
+    "complaint.greenzone": "p2",
+    "complaint.admin": "p2",
+    "appeal.punishment": "p2",
+    "technical.bug": "p2",
+    "question.help": "p3",
+    "feedback.other": "p3"
+}
 
 def determine_priority_and_escalation(
     category: str,
     raw_text: str,
-    has_attachments: bool,
+    has_evidence: bool,
     is_low_confidence: bool,
     is_ambiguous: bool
 ) -> Tuple[str, bool, List[str]]:
     """
-    Evaluates priority (p0-p3) and human escalation flag in strict documented order:
-    1. p0 (Critical): Account security breaches, password theft, severe server crashes.
-    2. p1 (High): Financial payments / donation issues, severe active server-laggers/cheats, major scam.
-    3. p2 (Medium): Standard player complaints (DM, DB, NonRP, GZ, chat), punishment appeals, admin complaints, bugs.
-    4. p3 (Low): General help questions, GPS/jobs guides, suggestions/feedback.
-
-    Note: Attachments (images_count) DO NOT automatically escalate p2 complaints to p1!
-    Mandatory human routing is triggered by category or textual markers for:
-    - Payments/donations
-    - Account access/theft
-    - Punishment appeals
-    - Admin complaints
-    - Ambiguous / low-confidence classifications
+    Separately and deterministically computes Priority (p0-p3) and Human Escalation flag (needs_human).
+    Strictly aligns with official taxonomy priorities and mandatory human routing conditions.
     """
     reasons = []
     text_lower = raw_text.lower()
 
-    # --- Step 1: Check p0 (Critical) ---
-    if category == "account_access" or P0_MARKERS.search(text_lower):
+    # --- Priority Determination ---
+    # 1. Base priority from official category
+    priority = OFFICIAL_PRIORITY_MAP.get(category, "p2")
+
+    # 2. Textual priority escalation
+    if HACK_MARKERS.search(text_lower):
         priority = "p0"
-        needs_human = True
-        reasons.append("Басымдық p0: Аккаунт қауіпсіздігіне немесе ұрлануына қатысты мәселе (Адамға міндетті жіберу)")
-        return priority, needs_human, reasons
-
-    # --- Step 2: Check p1 (High) ---
-    if category == "donation_payment" or P1_PAYMENT_MARKERS.search(text_lower) and "рубл" in text_lower or "теңге" in text_lower or "сом" in text_lower:
+        reasons.append("Басымдық p0: Мәтінде аккаунт ұрлануы немесе бұзылуы белгілері бар")
+    elif CHEAT_MARKERS.search(text_lower) and priority in {"p2", "p3"}:
         priority = "p1"
-        needs_human = True
-        reasons.append("Басымдық p1: Қаржылық төлем / Grand Coins донат мәселесі (Адамға міндетті жіберу)")
-        return priority, needs_human, reasons
-
-    if category == "player_report_cheats" and P1_SEVERE_CHEAT_MARKERS.search(text_lower):
+        reasons.append("Басымдық p1: Серверге қауіп төндіретін чит/софт анықталды")
+    elif PAYMENT_MARKERS.search(text_lower) and priority in {"p2", "p3"}:
         priority = "p1"
-        needs_human = False  # Standard severe cheat report can be triaged with high priority
-        reasons.append("Басымдық p1: Сервер тұрақтылығына қауіп төндіретін зиянды чит/рванка анықталды")
-        return priority, needs_human, reasons
+        reasons.append("Басымдық p1: Төлем немесе донат белгілері анықталды")
+    else:
+        reasons.append(f"Басымдық {priority}: Ресми таксономияға сәйкес ({category})")
 
-    if category == "player_report_scam":
-        priority = "p1"
-        needs_human = True
-        reasons.append("Басымдық p1: Мүлікті / көлікті NonRP алдап тартып алу (Адамға міндетті жіберу)")
-        return priority, needs_human, reasons
-
-    # --- Step 3: Check p2 (Medium) ---
-    if category in {
-        "player_report_dm", "player_report_db", "player_report_greenzone",
-        "player_report_nonrp", "player_report_insult", "appeal_punishment",
-        "admin_complaint", "gameplay_bug"
-    }:
-        priority = "p2"
-        # Determine human escalation
-        if category in MANDATORY_HUMAN_CATEGORIES or P2_APPEAL_MARKERS.search(text_lower) or P2_ADMIN_MARKERS.search(text_lower):
-            needs_human = True
-            reasons.append(f"Басымдық p2: '{category}' санаты адам бақылауын қажет етеді (әкімшілік / жаза шағымы)")
-        else:
-            needs_human = False
-            reasons.append(f"Басымдық p2: Ойыншылар арасындағы стандартты ереже бұзушылық немесе баг")
-
-        # Clarification / low confidence trigger
-        if is_low_confidence or is_ambiguous:
-            needs_human = True
-            reasons.append("Классификация ұқсастығы төмен немесе екіұшты болғандықтан адам тексеруі белгіленді")
-
-        return priority, needs_human, reasons
-
-    # --- Step 4: Check p3 (Low) ---
-    priority = "p3"
+    # --- Human Escalation Determination (Independent of early returns) ---
     needs_human = False
-    reasons.append(f"Басымдық p3: Ақпараттық сұрақ немесе жалпы ұсыныс/пікір ({category})")
 
-    if is_low_confidence or is_ambiguous:
+    # Check Category Conditions
+    if category in MANDATORY_HUMAN_CATEGORIES:
         needs_human = True
-        reasons.append("Төмен ұқсастық ұпайы себепті адам бақылауына жолданды")
+        reasons.append(f"Адамға міндетті бағыттау: '{category}' санаты")
+
+    # Check Textual Indicators
+    if HACK_MARKERS.search(text_lower):
+        needs_human = True
+        reasons.append("Адамға бағыттау: Аккаунт қауіпсіздігіне байланысты оқиға")
+    if PAYMENT_MARKERS.search(text_lower):
+        needs_human = True
+        reasons.append("Адамға бағыттау: Қаржылық төлемді тексеру қажет")
+    if APPEAL_MARKERS.search(text_lower):
+        needs_human = True
+        reasons.append("Адамға бағыттау: Жазаны қайта қарау / апелляция")
+    if CHEAT_MARKERS.search(text_lower):
+        needs_human = True
+        reasons.append("Адамға бағыттау: Чит немесе үшінші жақты бағдарламаны тексеру")
+    if ADMIN_MARKERS.search(text_lower):
+        needs_human = True
+        reasons.append("Адамға бағыттау: Әкімшілік үстінен түскен шағым")
+
+    # Low confidence or ambiguity
+    if is_low_confidence:
+        needs_human = True
+        reasons.append("Адамға бағыттау: Ұқсастық ұпайы төмен болғандықтан модератор тексеруі қажет")
+    if is_ambiguous:
+        needs_human = True
+        reasons.append("Адамға бағыттау: Екі санат арасындағы нәтиже жақын болғандықтан нақтылау қажет")
 
     return priority, needs_human, reasons

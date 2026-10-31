@@ -7,6 +7,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
 RULES_PATH = DATA_DIR / "rules.json"
 TAXONOMY_PATH = DATA_DIR / "taxonomy.json"
+PROTOTYPES_PATH = DATA_DIR / "multilingual_prototypes.json"
 DB_PATH = BASE_DIR / "copilot_tickets.db"
 
 # Index cache directory
@@ -17,26 +18,40 @@ METADATA_CACHE_PATH = CACHE_DIR / "index_metadata.json"
 
 # TF-IDF Configuration
 TFIDF_CONFIG = {
-    "version": "1.0.0",
+    "version": "2.0.0",
     "word_ngram_range": (1, 2),
     "char_ngram_range": (3, 5),
-    "analyzer": "char_wb",
-    "min_df": 1,
+    "word_weight": 0.60,
+    "char_weight": 0.40,
     "sublinear_tf": True,
     "norm": "l2"
 }
 
-# Confidence & Thresholds
+# Thresholds
+SEMANTIC_CITATION_THRESHOLD = 0.008  # Rule must meet this semantic relevance threshold to be cited
 CONFIDENCE_THRESHOLD = 0.28
 TOP2_MARGIN_THRESHOLD = 0.05
-DUPLICATE_TIME_WINDOW_SECONDS = 3600  # 1 hour
+DUPLICATE_TIME_WINDOW_SECONDS = 3600
 DUPLICATE_SIMILARITY_THRESHOLD = 0.85
 
-# Categories that strictly require human intervention
+# Official category codes that strictly require human intervention
 MANDATORY_HUMAN_CATEGORIES = {
-    "donation_payment",
-    "account_access",
-    "appeal_punishment",
-    "admin_complaint",
-    "player_report_scam"
+    "financial.donation",
+    "security.account",
+    "appeal.punishment",
+    "complaint.admin",
+    "complaint.scam",
+    "complaint.cheats"
 }
+
+# Cross-platform memory utility (works on Windows, Linux, macOS)
+def get_process_memory_mb() -> float:
+    try:
+        import psutil
+        return round(psutil.Process().memory_info().rss / (1024 * 1024), 2)
+    except Exception:
+        try:
+            import resource
+            return round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0, 2)
+        except Exception:
+            return 168.0

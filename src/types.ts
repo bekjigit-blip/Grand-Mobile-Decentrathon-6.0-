@@ -1,11 +1,12 @@
 export interface ExtractedData {
-  nicknames: string[];
-  rule_refs_raw: string[];
-  ids: string[];
-  has_attachments: boolean;
+  nickname: string | null;
+  rule_refs: string[];
+  has_evidence: boolean;
+  server: string | null;
 }
 
 export interface DraftReply {
+  lang: string;
   text: string;
   cited: string[];
 }
@@ -21,7 +22,6 @@ export interface MatchedRule {
 }
 
 export interface TriageResult {
-  ticket_id?: string;
   lang: string;
   category: string;
   priority: 'p0' | 'p1' | 'p2' | 'p3';
@@ -31,20 +31,28 @@ export interface TriageResult {
   needs_human: boolean;
   confidence: number;
   reasons: string[];
+  ticket_id?: string;
   matched_rules?: MatchedRule[];
+}
+
+export interface TicketMessage {
+  role: 'player' | 'reported_player' | 'admin' | 'system' | string;
+  text: string;
+  attachments?: number | any[];
 }
 
 export interface TicketItem {
   ticket_id: string;
+  kind?: string;
+  messages?: TicketMessage[];
   reporter_hash?: string;
   created_at?: string;
   server_lang?: string;
   lang?: string;
-  text: string;
+  text?: string;
   images_count?: number;
-  rule_refs_raw?: string[];
+  rule_refs_raw?: string | string[];
   status?: 'pending' | 'approved' | 'escalated' | 'clarification' | 'rejected';
-  admin_notes?: string;
   triage?: TriageResult;
 }
 
@@ -56,6 +64,8 @@ export interface BenchmarkMetrics {
     external_api_calls: number;
     external_api_cost_usd: number;
     offline_mode: boolean;
+    gold_labels_available: boolean;
+    note?: string;
   };
   index_metrics: {
     build_duration_seconds: number;
@@ -76,7 +86,8 @@ export interface BenchmarkMetrics {
   operational_metrics: {
     total_sample_tickets: number;
     needs_human_escalation_rate_percent: number;
-    citation_validity_percent: number;
+    citation_relevance_percent: number;
+    total_citations_analyzed: number;
   };
   multilingual_examples: {
     kazakh: Array<{

@@ -178,15 +178,15 @@ export const MetricsView: React.FC = () => {
 
                 <div>
                   <div className="flex justify-between text-slate-300 mb-1">
-                    <span>Цитаталардың дұрыстығы (Citation Validity):</span>
+                    <span>Цитаталардың дұрыстығы (Citation Relevance):</span>
                     <span className="font-bold font-mono text-emerald-400">
-                      {metrics.operational_metrics.citation_validity_percent}%
+                      {metrics.operational_metrics.citation_relevance_percent}%
                     </span>
                   </div>
                   <div className="w-full bg-slate-950 h-2 rounded-full overflow-hidden">
                     <div 
                       className="bg-emerald-500 h-full rounded-full" 
-                      style={{ width: `${metrics.operational_metrics.citation_validity_percent}%` }}
+                      style={{ width: `${metrics.operational_metrics.citation_relevance_percent}%` }}
                     />
                   </div>
                   <p className="text-[11px] text-slate-500 mt-1">

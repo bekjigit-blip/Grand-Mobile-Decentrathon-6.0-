@@ -1,19 +1,22 @@
 import time
 import os
-import resource
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Union
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from app.triage_service import get_triage_service
-from app.config import TFIDF_CONFIG, RULES_INDEX_PATH, TAXONOMY_INDEX_PATH, METADATA_CACHE_PATH
+from app.config import (
+    TFIDF_CONFIG, RULES_INDEX_PATH, TAXONOMY_INDEX_PATH, METADATA_CACHE_PATH,
+    get_process_memory_mb, RULES_PATH, TAXONOMY_PATH, DATA_DIR
+)
+from app.deduplication import save_admin_action, get_admin_actions
 import json
 
 app = FastAPI(
     title="Grand Mobile Support Copilot API",
     description="Offline CPU TF-IDF Triage Service for Grand Mobile × Decentrathon 6.0",
-    version="1.0.0"
+    version="2.0.0"
 )
 
 app.add_middleware(
@@ -26,18 +29,30 @@ app.add_middleware(
 
 SERVER_START_TIME = time.time()
 
-# Request and Response schemas
+# --- Official Decentrathon 6.0 Pydantic Schemas ---
+
+class MessageItem(BaseModel):
+    role: str = "player"
+    text: Optional[str] = ""
+    attachments: Optional[Union[int, List[Any]]] = 0
+
 class ExtractedData(BaseModel):
-    nicknames: List[str] = Field(default_factory=list)
-    rule_refs_raw: List[str] = Field(default_factory=list)
-    ids: List[str] = Field(default_factory=list)
-    has_attachments: bool = False
+    nickname: Optional[str] = None
+    rule_refs: List[str] = Field(default_factory=list)
+    has_evidence: bool = False
+    server: Optional[str] = None
 
 class DraftReply(BaseModel):
+    lang: str = "ru"
     text: str
     cited: List[str] = Field(default_factory=list)
 
 class TriageRequest(BaseModel):
+    # Official contract format
+    kind: Optional[str] = "complaint"
+    messages: Optional[List[MessageItem]] = None
+    
+    # Flat / legacy format support
     ticket_id: Optional[str] = None
     reporter_hash: Optional[str] = None
     created_at: Optional[str] = None
@@ -47,11 +62,11 @@ class TriageRequest(BaseModel):
     body: Optional[str] = None
     message: Optional[str] = None
     images_count: Optional[int] = 0
-    rule_refs_raw: Optional[List[str]] = None
-    attachments: Optional[List[Any]] = None
+    rule_refs_raw: Optional[Union[str, List[str]]] = None
+    attachments: Optional[Union[int, List[Any]]] = None
+    server: Optional[str] = None
 
 class TriageResponse(BaseModel):
-    ticket_id: Optional[str] = None
     lang: str
     category: str
     priority: str
@@ -61,7 +76,15 @@ class TriageResponse(BaseModel):
     needs_human: bool
     confidence: float
     reasons: List[str]
+    ticket_id: Optional[str] = None
     matched_rules: Optional[List[Dict[str, Any]]] = None
+
+class AdminActionRequest(BaseModel):
+    ticket_id: str
+    status: str
+    draft_text: Optional[str] = ""
+
+# --- Endpoints ---
 
 @app.on_event("startup")
 def startup_event():
@@ -70,15 +93,9 @@ def startup_event():
 
 @app.get("/health")
 def health():
-    """Health check endpoint measuring memory, status, index stats, and zero API costs."""
+    """Cross-platform health check endpoint (Windows, Linux, macOS compatible)."""
     uptime_sec = round(time.time() - SERVER_START_TIME, 2)
-    # Memory usage in MB
-    try:
-        mem_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-        # On Linux ru_maxrss is in KB
-        mem_mb = round(mem_kb / 1024.0, 2)
-    except Exception:
-        mem_mb = 0.0
+    mem_mb = get_process_memory_mb()
 
     rules_indexed = 0
     tax_categories = 14
@@ -86,7 +103,7 @@ def health():
         try:
             with open(METADATA_CACHE_PATH, "r", encoding="utf-8") as f:
                 meta = json.load(f)
-                rules_indexed = meta.get("rules_indexed_count", 286)
+                rules_indexed = meta.get("rules_indexed_count", 266)
                 tax_categories = meta.get("taxonomy_categories_count", 14)
         except Exception:
             pass
@@ -94,7 +111,7 @@ def health():
     return {
         "status": "ok",
         "service": "Grand Mobile Support Copilot",
-        "version": "1.0.0",
+        "version": "2.0.0",
         "uptime_seconds": uptime_sec,
         "memory_rss_mb": mem_mb,
         "offline_cpu_only": True,
@@ -111,7 +128,7 @@ def health():
 def triage(request_data: TriageRequest):
     """
     Standard Decentrathon 6.0 Triage Endpoint.
-    Conforms strictly to requested output schema.
+    Strictly conforms to official schema.
     """
     service = get_triage_service()
     ticket_dict = request_data.model_dump()
@@ -120,17 +137,15 @@ def triage(request_data: TriageRequest):
 
 @app.get("/api/rules")
 def get_rules():
-    """Returns official rules with 11 sections and 266 points for UI explorer."""
-    from app.config import RULES_PATH
+    """Returns official rules (11 sections, 266 points) for UI explorer."""
     if os.path.exists(RULES_PATH):
         with open(RULES_PATH, "r", encoding="utf-8") as f:
             return json.load(f)
-    return {"sections": []}
+    return {"rules": []}
 
 @app.get("/api/taxonomy")
 def get_taxonomy():
-    """Returns 14 taxonomy categories for UI filter and prototype explorer."""
-    from app.config import TAXONOMY_PATH
+    """Returns 14 taxonomy categories with official dot-separated codes."""
     if os.path.exists(TAXONOMY_PATH):
         with open(TAXONOMY_PATH, "r", encoding="utf-8") as f:
             return json.load(f)
@@ -138,10 +153,11 @@ def get_taxonomy():
 
 @app.get("/api/sample_tickets")
 def get_sample_tickets():
-    """Returns preset sample tickets from valid.jsonl for demonstration and testing."""
-    from app.config import DATA_DIR
+    """Returns sample tickets merged with SQLite-persisted admin actions."""
     sample_path = DATA_DIR / "sample_tickets.jsonl"
     results = []
+    admin_actions = get_admin_actions()
+
     if os.path.exists(sample_path):
         service = get_triage_service()
         with open(sample_path, "r", encoding="utf-8") as f:
@@ -150,11 +166,32 @@ def get_sample_tickets():
                 if line:
                     t = json.loads(line)
                     triaged = service.triage_ticket(t)
+                    t_id = t.get("ticket_id") or triaged.get("ticket_id")
+                    
+                    # Merge persisted admin actions if any
+                    persisted = admin_actions.get(t_id, {})
+                    status = persisted.get("status", "pending")
+                    if persisted.get("draft_text"):
+                        triaged["draft_reply"]["text"] = persisted["draft_text"]
+
                     results.append({
                         **t,
+                        "status": status,
                         "triage": triaged
                     })
     return results
+
+@app.post("/api/tickets/action")
+def record_ticket_action(action: AdminActionRequest):
+    """Persists admin moderation actions in SQLite so changes persist across page reloads."""
+    save_admin_action(action.ticket_id, action.status, action.draft_text or "")
+    return {
+        "status": "success",
+        "ticket_id": action.ticket_id,
+        "action": action.status,
+        "is_simulated": True,
+        "message": "Action successfully recorded in local SQLite database (Simulation mode)."
+    }
 
 @app.get("/api/benchmark")
 def get_benchmark():

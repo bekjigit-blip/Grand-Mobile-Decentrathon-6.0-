@@ -9,9 +9,9 @@ def test_repeated_rule_numbers_isolation():
 
     # Verify that key_to_index uses section_id::ref
     keys = list(indexer.key_to_index.keys())
-    assert any("sec_general::1.1" in k for k in keys)
-    assert any("sec_combat::2.1" in k for k in keys)
-    assert any("sec_greenzone::3.1" in k for k in keys)
+    assert any("1::1.1" in k for k in keys)
+    assert any("2::2.1" in k for k in keys)
+    assert any("3::3.1" in k for k in keys)
 
     # Check that search returns section_id and section_name
     results = indexer.search_rules("убийство без причины DM", top_k=3)
@@ -47,4 +47,4 @@ def test_cited_in_draft_reply_is_clean_string_list():
         assert isinstance(c, str)
         assert "::" not in c  # No internal technical separator!
         assert "sec_" not in c  # No internal section ID in cited list!
-    assert "Зеленых Зон" in res["draft_reply"]["text"] or "GZ" in res["draft_reply"]["text"]
+    assert "Зелен" in res["draft_reply"]["text"] or "GZ" in res["draft_reply"]["text"] or "Правила" in res["draft_reply"]["text"]

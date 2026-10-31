@@ -11,8 +11,11 @@ export const BatchView: React.FC = () => {
     setIsRunning(true);
     setStatusMessage('Пакеттік өңдеу орындалуда (Valid 16 sample)...');
     try {
-      // Fetch sample tickets and triage them
+      const t0 = performance.now();
       const res = await fetch('/api/sample_tickets');
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}: Failed to load sample tickets`);
+      }
       const tickets = await res.json();
       
       const preds = tickets.map((t: any) => ({
@@ -21,22 +24,26 @@ export const BatchView: React.FC = () => {
         category: t.triage?.category || 'unknown',
         priority: t.triage?.priority || 'p2',
         is_spam_or_duplicate: t.triage?.is_spam_or_duplicate || false,
-        extracted: t.triage?.extracted || {},
-        draft_reply: t.triage?.draft_reply || { text: '', cited: [] },
+        extracted: t.triage?.extracted || { nickname: null, rule_refs: [], has_evidence: false, server: null },
+        draft_reply: t.triage?.draft_reply || { lang: 'ru', text: '', cited: [] },
         needs_human: t.triage?.needs_human || false,
         confidence: t.triage?.confidence || 0.0,
         reasons: t.triage?.reasons || []
       }));
 
+      const t1 = performance.now();
+      const elapsedSec = (t1 - t0) / 1000.0;
+      const throughputVal = elapsedSec > 0 ? (preds.length / elapsedSec).toFixed(1) + ' tickets/sec' : 'N/A';
+
       setPredictions(preds);
       setStats({
         total: preds.length,
-        throughput: '190.5 tickets/sec',
-        cpuTime: '0.084s',
+        throughput: throughputVal,
+        cpuTime: `${elapsedSec.toFixed(3)}s`,
         needsHumanCount: preds.filter((p: any) => p.needs_human).length,
         duplicateCount: preds.filter((p: any) => p.is_spam_or_duplicate).length
       });
-      setStatusMessage('Пакеттік өңдеу сәтті аяқталды!');
+      setStatusMessage(`Пакеттік өңдеу аяқталды: ${preds.length} өтініш ${elapsedSec.toFixed(3)} секундта өлшенді.`);
     } catch (err: any) {
       setStatusMessage('Қате: ' + err.message);
     } finally {

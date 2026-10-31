@@ -17,7 +17,7 @@ def test_mandatory_human_routing_for_payments(triage_service):
         "images_count": 1
     }
     res = triage_service.triage_ticket(ticket)
-    assert res["category"] == "donation_payment"
+    assert res["category"] == "financial.donation"
     assert res["priority"] == "p1"
     assert res["needs_human"] is True
 
@@ -28,7 +28,7 @@ def test_mandatory_human_routing_for_hacked_account(triage_service):
         "images_count": 0
     }
     res = triage_service.triage_ticket(ticket)
-    assert res["category"] == "account_access"
+    assert res["category"] == "security.account"
     assert res["priority"] == "p0"
     assert res["needs_human"] is True
 
@@ -39,7 +39,7 @@ def test_mandatory_human_routing_for_appeal(triage_service):
         "images_count": 1
     }
     res = triage_service.triage_ticket(ticket)
-    assert res["category"] == "appeal_punishment"
+    assert res["category"] == "appeal.punishment"
     assert res["priority"] == "p2"
     assert res["needs_human"] is True
 
@@ -82,3 +82,71 @@ def test_batch_prediction_row_count_and_order(tmp_path):
     assert len(out_lines) == 10
     for i in range(10):
         assert out_lines[i]["ticket_id"] == f"T-{i}"
+
+def test_messages_input_adapter_and_admin_filtering(triage_service):
+    """Input with kind and messages array must filter out admin messages and read player text."""
+    input_payload = {
+        "kind": "complaint",
+        "messages": [
+            {"role": "player", "text": "Игрок Sergey_Kozlov оскорбил мою маму в чате!", "attachments": 1},
+            {"role": "admin", "text": "Жалоба рассмотрена, игрок заблокирован на 7 дней.", "attachments": 0}
+        ]
+    }
+    res = triage_service.triage_ticket(input_payload)
+    assert res["category"] == "complaint.insult"
+    assert res["priority"] in ["p2", "p3"]
+    assert res["extracted"]["nickname"] == "Sergey_Kozlov"
+    assert res["extracted"]["has_evidence"] is True
+    # Admin text must not be echoed in draft reply
+    assert "заблокирован на 7 дней" not in res["draft_reply"]["text"]
+
+def test_evidence_negation_detection(triage_service):
+    """If player explicitly writes 'скринов нет' / 'дәлел жоқ' and attachments == 0, has_evidence must be False."""
+    ticket = {
+        "text": "Игрок Ivan_Ivanov убил меня, но скринов нет и фрапса нет",
+        "images_count": 0
+    }
+    res = triage_service.triage_ticket(ticket)
+    assert res["extracted"]["has_evidence"] is False
+
+def test_cheats_escalation_to_p1(triage_service):
+    """Cheat reports with speedhack/flyhack must map to complaint.cheats and escalate to p1."""
+    ticket = {
+        "text": "Игрок Speed_Demon использует спидхак и летает над военной частью",
+        "images_count": 1
+    }
+    res = triage_service.triage_ticket(ticket)
+    assert res["category"] == "complaint.cheats"
+    assert res["priority"] == "p1"
+    assert res["needs_human"] is True
+
+def test_semantic_threshold_rejects_forced_irrelevant_citation(triage_service):
+    """If player specifies an arbitrary rule ref (e.g. 8.1) but text is total gibberish, cited list must be empty."""
+    ticket = {
+        "text": "zzzzzz qqqqqq asdfghjk",
+        "rule_refs_raw": ["8.1"]
+    }
+    res = triage_service.triage_ticket(ticket)
+    assert "8.1" not in res["draft_reply"]["cited"]
+
+def test_sqlite_admin_action_persistence():
+    """Verify that admin ticket actions persist and reload via deduplication SQLite functions."""
+    from app.deduplication import save_admin_action, get_admin_actions
+    ticket_id = "TICKET_TEST_SQLITE_PERSIST_1"
+    save_admin_action(
+        ticket_id=ticket_id,
+        action="APPROVED",
+        category="complaint.dm",
+        priority="p2",
+        assigned_to="Admin_Kairat",
+        note="Игрок посажен в деморган"
+    )
+
+    actions = get_admin_actions(ticket_id)
+    assert len(actions) > 0
+    latest = actions[0]
+    assert latest["action"] == "APPROVED"
+    assert latest["category"] == "complaint.dm"
+    assert latest["assigned_to"] == "Admin_Kairat"
+    assert latest["note"] == "Игрок посажен в деморган"
+

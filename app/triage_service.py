@@ -1,7 +1,7 @@
 import time
 from typing import Dict, Any, List, Optional
 
-from app.text_processor import process_ticket_text
+from app.text_processor import adapt_input_ticket, process_ticket_text
 from app.language_detector import detect_language
 from app.taxonomy_classifier import TaxonomyClassifier
 from app.rule_indexer import RuleIndexer
@@ -17,61 +17,88 @@ class TriageService:
 
     def initialize(self):
         if not self._initialized:
-            # Try to load existing cached indices or build from data/
             if not self.taxonomy_classifier.load_index():
                 self.taxonomy_classifier.build_index()
             if not self.rule_indexer.load_index():
                 self.rule_indexer.build_index()
             self._initialized = True
 
-    def triage_ticket(self, ticket: Dict[str, Any]) -> Dict[str, Any]:
+    def triage_ticket(self, raw_input: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Processes a single ticket and returns the standard Decentrathon 6.0 triage output.
+        Unified triage pipeline strictly conforming to official Decentrathon 6.0 contract:
+        - Accepts messages format: {kind, messages: [{role, text, attachments}]}
+        - Or legacy format: {text, images_count, rule_refs_raw}
+        - Returns:
+          {
+            "lang": "kk",
+            "category": "complaint.insult",
+            "priority": "p2",
+            "is_spam_or_duplicate": false,
+            "extracted": {
+              "nickname": "Arman_Petrov",
+              "rule_refs": [],
+              "has_evidence": true,
+              "server": null
+            },
+            "draft_reply": {
+              "lang": "kk",
+              "text": "...",
+              "cited": []
+            },
+            "needs_human": true,
+            "confidence": 0.0,
+            "reasons": []
+          }
         """
         self.initialize()
 
-        raw_text = ticket.get("text") or ticket.get("body") or ticket.get("message") or ""
-        images_count = ticket.get("images_count", 0)
-        if "attachments" in ticket and isinstance(ticket["attachments"], list):
-            images_count = max(images_count, len(ticket["attachments"]))
+        # 1. Adapt input (filters out admin messages, unifies attachments)
+        adapted = adapt_input_ticket(raw_input)
+        raw_text = adapted["raw_text"]
+        ticket_id = adapted["ticket_id"] or f"TICKET_{int(time.time()*1000)}"
+        reporter_hash = adapted["reporter_hash"]
+        created_at = adapted["created_at"]
+        kind = adapted["kind"]
 
-        ticket_id = str(ticket.get("ticket_id") or ticket.get("id") or f"TICKET_{int(time.time()*1000)}")
-        reporter_hash = ticket.get("reporter_hash")
-        created_at = ticket.get("created_at")
-        hint_lang = ticket.get("lang") or ticket.get("server_lang")
-        explicit_rule_refs = ticket.get("rule_refs_raw") or []
-
-        # 1. Text processing & entity extraction
-        processed = process_ticket_text(raw_text, images_count, explicit_rule_refs)
+        # 2. Text processing and structured entity extraction
+        processed = process_ticket_text(
+            raw_text=raw_text,
+            attachments_count=adapted["attachments_count"],
+            explicit_rule_refs=adapted["rule_refs_raw"]
+        )
         extracted = processed["extracted"]
 
-        # 2. Language detection (independent of server_lang)
-        detected_lang = detect_language(raw_text, hint_lang)
+        # 3. Multilingual language detection (runs on CP1251-restored text)
+        detected_lang = detect_language(processed["fixed_text"], adapted.get("server_hint"))
 
-        # 3. Category classification via TF-IDF prototypes & lexicon signals
-        cat_result = self.taxonomy_classifier.classify(processed["augmented_text"], extracted)
+        # 4. Taxonomy classification with kind constraint
+        cat_result = self.taxonomy_classifier.classify(
+            text=processed["augmented_text"],
+            extracted=extracted,
+            kind_constraint=kind
+        )
         category = cat_result["category"]
         confidence = cat_result["confidence"]
         is_low_confidence = cat_result["is_low_confidence"]
         is_ambiguous = cat_result["is_ambiguous"]
 
-        # 4. Priority & Human Escalation Determination
+        # 5. Deterministic priority and human escalation
         priority, needs_human, priority_reasons = determine_priority_and_escalation(
             category=category,
             raw_text=raw_text,
-            has_attachments=extracted["has_attachments"],
+            has_evidence=extracted["has_evidence"],
             is_low_confidence=is_low_confidence,
             is_ambiguous=is_ambiguous
         )
 
-        # 5. Rule Search & Citation Verification
+        # 6. Rule search with semantic relevance gate
         matched_rules = self.rule_indexer.search_rules(
             query_text=processed["augmented_text"],
             top_k=3,
-            rule_refs_raw=extracted["rule_refs_raw"]
+            rule_refs_raw=extracted["rule_refs"]
         )
 
-        # 6. Deduplication & Spam check (1-hour window with reporter_hash & created_at)
+        # 7. Deduplication within 1-hour window (requires reporter_hash and created_at)
         is_spam_or_duplicate, dup_reason = check_and_record_duplicate(
             ticket_id=ticket_id,
             reporter_hash=reporter_hash,
@@ -84,32 +111,44 @@ class TriageService:
         if dup_reason:
             all_reasons.append(dup_reason)
 
-        # 7. Draft reply formatting
+        # 8. Draft reply generation
         draft_reply = format_draft_reply(
             lang=detected_lang,
             category=category,
             is_duplicate=is_spam_or_duplicate,
             needs_human=needs_human,
             is_ambiguous=is_ambiguous,
-            has_attachments=extracted["has_attachments"],
+            has_evidence=extracted["has_evidence"],
             matched_rules=matched_rules
         )
 
-        return {
-            "ticket_id": ticket_id,
+        # Result matching the exact Decentrathon 6.0 contract
+        result = {
             "lang": detected_lang,
             "category": category,
             "priority": priority,
             "is_spam_or_duplicate": bool(is_spam_or_duplicate),
-            "extracted": extracted,
-            "draft_reply": draft_reply,
+            "extracted": {
+                "nickname": extracted["nickname"],
+                "rule_refs": extracted["rule_refs"],
+                "has_evidence": bool(extracted["has_evidence"]),
+                "server": extracted["server"]
+            },
+            "draft_reply": {
+                "lang": draft_reply["lang"],
+                "text": draft_reply["text"],
+                "cited": draft_reply["cited"]
+            },
             "needs_human": bool(needs_human),
             "confidence": float(confidence),
             "reasons": all_reasons,
-            "matched_rules": matched_rules  # for UI display and detailed inspection
+            # Auxiliary fields for UI
+            "ticket_id": ticket_id,
+            "matched_rules": matched_rules
         }
 
-# Global service instance
+        return result
+
 _triage_instance = None
 
 def get_triage_service() -> TriageService:

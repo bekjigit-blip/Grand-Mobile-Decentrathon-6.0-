@@ -12,9 +12,17 @@ LEAK_FIELDS = {
     'admin_messages', 'moderator', 'resolution', 'label', 'ground_truth'
 }
 
-def sanitize_input_ticket(ticket: Dict[str, Any]) -> Dict[str, Any]:
-    """Removes potential admin/status data leakage fields from the input ticket."""
-    return {k: v for k, v in ticket.items() if k not in LEAK_FIELDS}
+def sanitize_input_record(record: Dict[str, Any]) -> Dict[str, Any]:
+    """Scrubs any potential ground-truth or admin leak fields from ticket before prediction."""
+    clean = {k: v for k, v in record.items() if k not in LEAK_FIELDS}
+    if "messages" in clean and isinstance(clean["messages"], list):
+        clean["messages"] = [
+            m for m in clean["messages"]
+            if isinstance(m, dict) and str(m.get("role", "")).lower() not in {"admin", "system", "moderator"}
+        ]
+    return clean
+
+sanitize_input_ticket = sanitize_input_record
 
 def run_batch_prediction(input_path: str, output_path: str) -> Dict[str, Any]:
     if not os.path.exists(input_path):
@@ -27,7 +35,6 @@ def run_batch_prediction(input_path: str, output_path: str) -> Dict[str, Any]:
 
     start_time = time.time()
 
-    # Ensure output directory exists
     output_dir = os.path.dirname(output_path)
     if output_dir:
         os.makedirs(output_dir, exist_ok=True)
@@ -39,14 +46,13 @@ def run_batch_prediction(input_path: str, output_path: str) -> Dict[str, Any]:
             total_count += 1
             line = line.strip()
             if not line:
-                # Output fallback for empty line to maintain strict 1:1 row count
                 fallback_record = {
                     "lang": "ru",
-                    "category": "in_game_help",
+                    "category": "question.help",
                     "priority": "p3",
                     "is_spam_or_duplicate": False,
-                    "extracted": {"nicknames": [], "rule_refs_raw": [], "ids": [], "has_attachments": False},
-                    "draft_reply": {"text": "Здравствуйте! Чем мы можем вам помочь?", "cited": []},
+                    "extracted": {"nickname": None, "rule_refs": [], "has_evidence": False, "server": None},
+                    "draft_reply": {"lang": "ru", "text": "Здравствуйте! Чем мы можем вам помочь?", "cited": []},
                     "needs_human": False,
                     "confidence": 0.0,
                     "reasons": ["Пустая строка во входном файле"]
@@ -55,11 +61,10 @@ def run_batch_prediction(input_path: str, output_path: str) -> Dict[str, Any]:
                 continue
 
             try:
-                ticket_data = json.loads(line)
-                clean_ticket = sanitize_input_ticket(ticket_data)
-                result = triage_service.triage_ticket(clean_ticket)
+                raw_record = json.loads(line)
+                clean_record = sanitize_input_record(raw_record)
+                result = triage_service.triage_ticket(clean_record)
 
-                # Format exact Decentrathon 6.0 output specification
                 out_record = {
                     "lang": result["lang"],
                     "category": result["category"],
@@ -71,21 +76,20 @@ def run_batch_prediction(input_path: str, output_path: str) -> Dict[str, Any]:
                     "confidence": result["confidence"],
                     "reasons": result["reasons"]
                 }
-                if "ticket_id" in clean_ticket:
-                    out_record["ticket_id"] = clean_ticket["ticket_id"]
+                if "ticket_id" in clean_record:
+                    out_record["ticket_id"] = clean_record["ticket_id"]
 
                 out_f.write(json.dumps(out_record, ensure_ascii=False) + "\n")
                 success_count += 1
             except Exception as e:
                 error_count += 1
-                # Fault tolerance: single malformed record must not crash the batch!
                 fallback_record = {
                     "lang": "ru",
-                    "category": "other_feedback",
+                    "category": "feedback.other",
                     "priority": "p3",
                     "is_spam_or_duplicate": False,
-                    "extracted": {"nicknames": [], "rule_refs_raw": [], "ids": [], "has_attachments": False},
-                    "draft_reply": {"text": "Здравствуйте! Ваше обращение принято к рассмотрению.", "cited": []},
+                    "extracted": {"nickname": None, "rule_refs": [], "has_evidence": False, "server": None},
+                    "draft_reply": {"lang": "ru", "text": "Здравствуйте! Ваше обращение принято к рассмотрению.", "cited": []},
                     "needs_human": True,
                     "confidence": 0.0,
                     "reasons": [f"Ошибка парсинга строки #{line_num}: {str(e)}"]

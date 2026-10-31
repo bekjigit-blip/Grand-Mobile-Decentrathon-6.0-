@@ -29,7 +29,7 @@ export const RulesExplorer: React.FC = () => {
     fetch('/api/rules')
       .then(res => res.json())
       .then(data => {
-        setSections(data.sections || []);
+        setSections(data.rules || data.sections || []);
         setIsLoading(false);
       })
       .catch(err => {
